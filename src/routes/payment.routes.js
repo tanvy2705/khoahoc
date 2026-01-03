@@ -7,6 +7,8 @@ const { uploadSingle } = require('../middlewares/upload');
 
 // Public routes (webhooks)
 router.post('/momo-notify', paymentController.handleMoMoCallback);
+router.get('/vnpay-return', paymentController.handleVNPayReturn);
+router.get('/vnpay-ipn', paymentController.handleVNPayIPN);
 
 // Protected routes
 router.post('/create-url', auth, paymentController.createPaymentUrl);

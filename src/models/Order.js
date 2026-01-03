@@ -29,12 +29,26 @@ class Order {
       
       // Insert order items
       if (orderData.items && orderData.items.length > 0) {
-        const itemValues = orderData.items.map(item => [
-          orderId,
-          item.course_id,
-          item.price,
-          item.discount_price
-        ]);
+        // FIX: Validate và đảm bảo tất cả giá trị hợp lệ
+        const itemValues = orderData.items
+          .filter(item => {
+            // Bỏ qua item không hợp lệ
+            if (!item.course_id || !item.price) {
+              console.warn('⚠️ Skipping invalid item:', item);
+              return false;
+            }
+            return true;
+          })
+          .map(item => [
+            orderId,
+            item.course_id,
+            parseFloat(item.price) || 0,  // Đảm bảo price luôn có giá trị
+            item.discount_price ? parseFloat(item.discount_price) : null  // discount_price có thể null
+          ]);
+        
+        if (itemValues.length === 0) {
+          throw new Error('No valid items to insert');
+        }
         
         await connection.query(
           `INSERT INTO order_items (order_id, course_id, price, discount_price)
@@ -47,19 +61,26 @@ class Order {
     });
   }
 
-  // Get order by ID
-  static async findById(orderId) {
-    return await queryOne(
-      `SELECT o.*, 
+  // Get order by ID (with optional user_id filter)
+  static async findById(orderId, userId = null) {
+    let sql = `SELECT o.*, 
               u.full_name as customer_name,
               u.email as customer_email,
               p.code as promotion_code
        FROM orders o
        JOIN users u ON o.user_id = u.id
        LEFT JOIN promotions p ON o.promotion_id = p.id
-       WHERE o.id = ?`,
-      [orderId]
-    );
+       WHERE o.id = ?`;
+    
+    const params = [orderId];
+    
+    // If userId is provided, add user_id check
+    if (userId !== null && userId !== undefined) {
+      sql += ' AND o.user_id = ?';
+      params.push(userId);
+    }
+    
+    return await queryOne(sql, params);
   }
 
   // Get order by code

@@ -15,8 +15,12 @@ const app = express();
 // SECURITY MIDDLEWARES
 // =============================================
 
-// Helmet - Set security headers
-app.use(helmet());
+// Helmet - Set security headers with custom config for images
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // ✅ Allow cross-origin images
+  })
+);
 
 // CORS configuration
 const corsOptions = {
@@ -59,8 +63,12 @@ if (process.env.NODE_ENV === 'development') {
 // STATIC FILES
 // =============================================
 
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// ✅ Serve uploaded files with CORS headers
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.join(__dirname, '..', 'uploads')));
 
 // =============================================
 // ROUTES
@@ -78,7 +86,7 @@ app.get('/health', (req, res) => {
 // API routes
 app.use('/api', routes);
 
-// 404 handler - ✅ FIXED: Changed from app.use('*', ...) to middleware function
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,

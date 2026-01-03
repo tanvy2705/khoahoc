@@ -11,10 +11,15 @@ const validate = require('../middlewares/validator');
 router.get('/', courseController.getAllCourses);
 router.get('/categories', courseController.getCategories);
 router.get('/category/:categoryId', courseController.getCoursesByCategory);
+
+// ⚠️ QUAN TRỌNG: Các route cụ thể PHẢI đặt TRƯỚC route /:id
+// Protected routes - User (ĐẶT TRƯỚC /:id)
+router.get('/enrolled', auth, isAuthenticated, courseController.getEnrolledCourses);
+
+// Route với dynamic ID (ĐẶT SAU các route cụ thể)
 router.get('/:id', courseController.getCourseById);
 
-// Protected routes - User
-router.get('/enrolled', auth, isAuthenticated, courseController.getEnrolledCourses);
+// Các route khác với /:id
 router.post('/:id/enroll', auth, isAuthenticated, courseController.enrollCourse);
 router.get('/:id/progress', auth, isAuthenticated, courseController.getCourseProgress);
 router.post('/:courseId/lessons/:lessonId/complete', auth, isAuthenticated, courseController.completeLesson);

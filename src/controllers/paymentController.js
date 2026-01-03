@@ -7,6 +7,7 @@ const Course = require('../models/Course');
 const ResponseHandler = require('../utils/responseHandler');
 const asyncHandler = require('../middlewares/asyncHandler');
 const momoService = require('../services/momoService');
+const vnpayService = require('../services/vnpayService');
 const notificationService = require('../services/notificationService');
 const { PAYMENT_METHODS } = require('../utils/constants');
 
@@ -124,7 +125,7 @@ class PaymentController {
     });
   });
 
-  // Create payment URL (MoMo)
+  // Create payment URL
   createPaymentUrl = asyncHandler(async (req, res) => {
     const { order_id, payment_method } = req.body;
 
@@ -134,7 +135,6 @@ class PaymentController {
       return ResponseHandler.notFound(res, 'Order not found');
     }
 
-    // Check authorization
     if (order.user_id !== req.user.id) {
       return ResponseHandler.forbidden(res, 'You do not have permission to pay for this order');
     }
@@ -143,15 +143,50 @@ class PaymentController {
       return ResponseHandler.conflict(res, 'Order already paid');
     }
 
+    // Convert IPv6 to IPv4
+    let ipAddr = req.headers['x-forwarded-for'] || 
+                 req.connection.remoteAddress || 
+                 req.socket.remoteAddress ||
+                 req.ip ||
+                 '127.0.0.1';
+
+    if (ipAddr === '::1' || ipAddr === '::ffff:127.0.0.1') {
+      ipAddr = '127.0.0.1';
+    }
+
+    if (ipAddr.startsWith('::ffff:')) {
+      ipAddr = ipAddr.substring(7);
+    }
+
+    console.log('🌐 Client IP (fixed):', ipAddr);
+
+    // Handle VNPay payment
+    if (payment_method === PAYMENT_METHODS.VNPAY || payment_method === 'VNPAY' || payment_method === 'vnpay') {
+      const paymentUrl = await vnpayService.createPayment({
+        orderId: order.order_code,
+        amount: order.final_amount,
+        orderInfo: `Thanh toan don hang ${order.order_code}`
+      }, ipAddr);
+
+      await Payment.create({
+        order_id: order.id,
+        transaction_code: order.order_code,
+        payment_method: 'vnpay',
+        amount: order.final_amount,
+        status: 'pending'
+      });
+
+      return ResponseHandler.success(res, { payment_url: paymentUrl });
+    }
+
+    // Handle MoMo payment
     if (payment_method === PAYMENT_METHODS.MOMO) {
-      // Create MoMo payment
       const paymentUrl = await momoService.createPayment({
         orderId: order.order_code,
         amount: order.final_amount,
         orderInfo: `Payment for order ${order.order_code}`
       });
 
-      // Create payment record
       await Payment.create({
         order_id: order.id,
         transaction_code: order.order_code,
@@ -163,8 +198,8 @@ class PaymentController {
       return ResponseHandler.success(res, { payment_url: paymentUrl });
     }
 
+    // Handle Manual Transfer
     if (payment_method === PAYMENT_METHODS.MANUAL_TRANSFER) {
-      // Return manual transfer info
       return ResponseHandler.success(res, {
         payment_method: PAYMENT_METHODS.MANUAL_TRANSFER,
         transfer_info: {
@@ -209,11 +244,21 @@ class PaymentController {
       await Order.updatePaymentStatus(order.id, 'paid');
       await Order.updateStatus(order.id, 'confirmed');
 
-      // Enroll user in courses
+      // Enroll user in courses with error handling
+      console.log('🎓 MoMo: Starting enrollment process...');
       const orderItems = await Order.getItems(order.id);
+      
       for (const item of orderItems) {
-        await Enrollment.create(order.user_id, item.course_id);
-        await Course.updateStudentCount(item.course_id);
+        try {
+          const isEnrolled = await Enrollment.isEnrolled(order.user_id, item.course_id);
+          if (!isEnrolled) {
+            await Enrollment.create(order.user_id, item.course_id);
+            await Course.updateStudentCount(item.course_id);
+            console.log(`✅ MoMo: Enrolled course ${item.course_id}`);
+          }
+        } catch (enrollError) {
+          console.error(`❌ MoMo: Error enrolling course ${item.course_id}:`, enrollError.message);
+        }
       }
 
       // Clear cart
@@ -233,6 +278,196 @@ class PaymentController {
       await notificationService.sendPaymentFailedNotification(order.user_id, order);
 
       return ResponseHandler.success(res, null, 'Payment failed');
+    }
+  });
+
+  // VNPay return URL handler
+  handleVNPayReturn = asyncHandler(async (req, res) => {
+    try {
+      const vnpayData = req.query;
+
+      // Verify signature
+      const isValid = vnpayService.verifySignature(vnpayData);
+      if (!isValid) {
+        console.log('❌ Invalid VNPay signature');
+        return res.redirect(`${process.env.FRONTEND_URL}/payment-failed?error=invalid_signature`);
+      }
+
+      // Parse return data
+      const paymentResult = vnpayService.parseReturnData(vnpayData);
+      
+      console.log('✅ VNPay return data:', paymentResult);
+
+      // Find order
+      const order = await Order.findByCode(paymentResult.orderId);
+      if (!order) {
+        console.log('❌ Order not found:', paymentResult.orderId);
+        return res.redirect(`${process.env.FRONTEND_URL}/payment-failed?error=order_not_found`);
+      }
+
+      // Find payment
+      const payment = await Payment.findByOrderId(order.id);
+
+      if (paymentResult.isSuccess) {
+        // Payment successful
+        console.log('✅ Payment successful:', {
+          orderId: paymentResult.orderId,
+          amount: paymentResult.amount,
+          transactionNo: paymentResult.transactionNo
+        });
+
+        await Payment.updateStatus(payment.id, 'success', new Date());
+        
+        // Save VNPay details
+        if (Payment.saveVNPayDetails) {
+          await Payment.saveVNPayDetails(payment.id, paymentResult.rawData);
+        }
+
+        await Order.updatePaymentStatus(order.id, 'paid');
+        await Order.updateStatus(order.id, 'confirmed');
+
+        // ⭐ ENROLL USER IN COURSES - WITH BETTER ERROR HANDLING
+        console.log('🎓 Starting enrollment process...');
+        const orderItems = await Order.getItems(order.id);
+        console.log(`📚 Found ${orderItems.length} courses to enroll`);
+        
+        for (const item of orderItems) {
+          try {
+            // Kiểm tra xem đã enroll chưa
+            const isEnrolled = await Enrollment.isEnrolled(order.user_id, item.course_id);
+            
+            if (isEnrolled) {
+              console.log(`✅ User already enrolled in course ${item.course_id} (${item.course_title})`);
+              continue;
+            }
+            
+            // Tạo enrollment mới
+            await Enrollment.create(order.user_id, item.course_id);
+            console.log(`✅ Enrolled user ${order.user_id} in course ${item.course_id} (${item.course_title})`);
+            
+            // Update student count
+            await Course.updateStudentCount(item.course_id);
+            console.log(`✅ Updated student count for course ${item.course_id}`);
+            
+          } catch (enrollError) {
+            // Log lỗi nhưng không dừng process
+            console.error(`❌ Error enrolling course ${item.course_id}:`, enrollError.message);
+          }
+        }
+        console.log('🎉 Enrollment process completed');
+
+        // Clear cart
+        await Cart.clear(order.user_id);
+        console.log('🧹 Cart cleared');
+
+        // Send notification
+        try {
+          await notificationService.sendPaymentSuccessNotification(order.user_id, order);
+          console.log('📧 Success notification sent');
+        } catch (notifError) {
+          console.error('Email error:', notifError);
+        }
+
+        // Redirect to success page
+        return res.redirect(
+          `${process.env.FRONTEND_URL}/payment-success?orderId=${paymentResult.orderId}&amount=${paymentResult.amount}&transactionNo=${paymentResult.transactionNo}`
+        );
+      } else {
+        // Payment failed
+        console.log('❌ Payment failed:', {
+          orderId: paymentResult.orderId,
+          responseCode: paymentResult.responseCode,
+          message: paymentResult.message
+        });
+
+        await Payment.updateStatus(payment.id, 'failed');
+        
+        if (Payment.saveVNPayDetails) {
+          await Payment.saveVNPayDetails(payment.id, paymentResult.rawData);
+        }
+
+        await Order.updatePaymentStatus(order.id, 'failed');
+
+        // Send notification
+        try {
+          await notificationService.sendPaymentFailedNotification(order.user_id, order);
+        } catch (notifError) {
+          console.error('Email error:', notifError);
+        }
+
+        // Redirect to failed page
+        return res.redirect(
+          `${process.env.FRONTEND_URL}/payment-failed?orderId=${paymentResult.orderId}&code=${paymentResult.responseCode}&message=${encodeURIComponent(paymentResult.message)}`
+        );
+      }
+    } catch (error) {
+      console.error('❌ Error processing VNPay return:', error);
+      return res.redirect(`${process.env.FRONTEND_URL}/payment-failed?error=server_error`);
+    }
+  });
+
+  // VNPay IPN (Instant Payment Notification) handler
+  handleVNPayIPN = asyncHandler(async (req, res) => {
+    try {
+      const vnpayData = req.query;
+
+      // Verify signature
+      const isValid = vnpayService.verifySignature(vnpayData);
+      if (!isValid) {
+        return res.json({ RspCode: '97', Message: 'Invalid signature' });
+      }
+
+      // Parse data
+      const paymentResult = vnpayService.parseReturnData(vnpayData);
+
+      // Find order
+      const order = await Order.findByCode(paymentResult.orderId);
+      if (!order) {
+        return res.json({ RspCode: '01', Message: 'Order not found' });
+      }
+
+      // Check if order is already paid
+      if (order.payment_status === 'paid') {
+        return res.json({ RspCode: '02', Message: 'Order already confirmed' });
+      }
+
+      // Find payment
+      const payment = await Payment.findByOrderId(order.id);
+
+      if (paymentResult.isSuccess) {
+        // Update payment and order status
+        await Payment.updateStatus(payment.id, 'success', new Date());
+        await Order.updatePaymentStatus(order.id, 'paid');
+        await Order.updateStatus(order.id, 'confirmed');
+
+        // Process enrollment with error handling
+        console.log('🎓 IPN: Starting enrollment process...');
+        const orderItems = await Order.getItems(order.id);
+        
+        for (const item of orderItems) {
+          try {
+            const isEnrolled = await Enrollment.isEnrolled(order.user_id, item.course_id);
+            if (!isEnrolled) {
+              await Enrollment.create(order.user_id, item.course_id);
+              await Course.updateStudentCount(item.course_id);
+              console.log(`✅ IPN: Enrolled course ${item.course_id}`);
+            }
+          } catch (enrollError) {
+            console.error(`❌ IPN: Error enrolling course ${item.course_id}:`, enrollError.message);
+          }
+        }
+
+        return res.json({ RspCode: '00', Message: 'Success' });
+      } else {
+        // Payment failed
+        await Payment.updateStatus(payment.id, 'failed');
+        await Order.updatePaymentStatus(order.id, 'failed');
+
+        return res.json({ RspCode: '00', Message: 'Confirmed' });
+      }
+    } catch (error) {
+      console.error('❌ Error processing VNPay IPN:', error);
+      return res.json({ RspCode: '99', Message: 'Unknown error' });
     }
   });
 
@@ -301,11 +536,21 @@ class PaymentController {
       await Order.updatePaymentStatus(order.id, 'paid');
       await Order.updateStatus(order.id, 'confirmed');
 
-      // Enroll user in courses
+      // Enroll user in courses with error handling
+      console.log('🎓 Manual Transfer: Starting enrollment process...');
       const orderItems = await Order.getItems(order.id);
+      
       for (const item of orderItems) {
-        await Enrollment.create(order.user_id, item.course_id);
-        await Course.updateStudentCount(item.course_id);
+        try {
+          const isEnrolled = await Enrollment.isEnrolled(order.user_id, item.course_id);
+          if (!isEnrolled) {
+            await Enrollment.create(order.user_id, item.course_id);
+            await Course.updateStudentCount(item.course_id);
+            console.log(`✅ Manual: Enrolled course ${item.course_id}`);
+          }
+        } catch (enrollError) {
+          console.error(`❌ Manual: Error enrolling course ${item.course_id}:`, enrollError.message);
+        }
       }
 
       // Clear cart
