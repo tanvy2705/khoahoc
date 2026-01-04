@@ -1,4 +1,3 @@
-
 const { query, queryOne } = require('../config/database');
 
 class Payment {
@@ -17,6 +16,14 @@ class Payment {
     );
     
     return result.insertId;
+  }
+
+  // Find by ID
+  static async findById(paymentId) {
+    return await queryOne(
+      'SELECT * FROM payments WHERE id = ?',
+      [paymentId]
+    );
   }
 
   // Find by transaction code

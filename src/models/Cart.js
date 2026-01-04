@@ -8,7 +8,6 @@ class Cart {
               c.user_id,
               c.course_id,
               c.added_at,
-              co.id as course_id,
               co.title,
               co.description,
               co.thumbnail,
@@ -23,7 +22,7 @@ class Cart {
       [userId]
     );
 
-    // ✅ Transform flat structure to nested structure
+    // Transform flat structure to nested structure
     return rows.map(row => ({
       id: row.id,
       user_id: row.user_id,
@@ -34,8 +33,8 @@ class Cart {
         title: row.title,
         description: row.description,
         thumbnail: row.thumbnail,
-        price: row.price,
-        discount_price: row.discount_price,
+        price: parseFloat(row.price) || 0,
+        discount_price: row.discount_price ? parseFloat(row.discount_price) : null,
         category_name: row.category_name
       }
     }));
