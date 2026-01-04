@@ -114,10 +114,14 @@ class User {
     
     sql += ' ORDER BY created_at DESC';
     
-    if (filters.limit) {
-      sql += ' LIMIT ? OFFSET ?';
-      params.push(parseInt(filters.limit), parseInt(filters.offset || 0));
-    }
+   if (filters.limit !== undefined) {
+  const limit = Number(filters.limit);
+  const offset = Number(filters.offset || 0);
+
+  sql += ' LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+}
+
     
     return await query(sql, params);
   }

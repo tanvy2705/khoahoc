@@ -2,46 +2,51 @@ const { query, queryOne } = require('../config/database');
 
 class Course {
   // Get all courses
-  static async getAll(filters = {}) {
-    let sql = `
-      SELECT c.*, 
-             cat.name as category_name,
-             u.full_name as instructor_name
-      FROM courses c
-      LEFT JOIN categories cat ON c.category_id = cat.id
-      LEFT JOIN users u ON c.instructor_id = u.id
-      WHERE 1=1
-    `;
-    const params = [];
-    
-    if (filters.status) {
-      sql += ' AND c.status = ?';
-      params.push(filters.status);
-    }
-    
-    if (filters.category_id) {
-      sql += ' AND c.category_id = ?';
-      params.push(filters.category_id);
-    }
-    
-    if (filters.featured) {
-      sql += ' AND c.featured = TRUE';
-    }
-    
-    if (filters.search) {
-      sql += ' AND (c.title LIKE ? OR c.description LIKE ?)';
-      params.push(`%${filters.search}%`, `%${filters.search}%`);
-    }
-    
-    sql += ' ORDER BY c.created_at DESC';
-    
-    if (filters.limit) {
-      sql += ' LIMIT ? OFFSET ?';
-      params.push(parseInt(filters.limit), parseInt(filters.offset || 0));
-    }
-    
-    return await query(sql, params);
+ // Get all courses
+static async getAll(filters = {}) {
+  let sql = `
+    SELECT c.*, 
+           cat.name as category_name,
+           u.full_name as instructor_name
+    FROM courses c
+    LEFT JOIN categories cat ON c.category_id = cat.id
+    LEFT JOIN users u ON c.instructor_id = u.id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (filters.status) {
+    sql += ' AND c.status = ?';
+    params.push(filters.status);
   }
+
+  if (filters.category_id) {
+    sql += ' AND c.category_id = ?';
+    params.push(filters.category_id);
+  }
+
+  if (filters.featured) {
+    sql += ' AND c.featured = TRUE';
+  }
+
+  if (filters.search) {
+    sql += ' AND (c.title LIKE ? OR c.description LIKE ?)';
+    params.push(`%${filters.search}%`, `%${filters.search}%`);
+  }
+
+  sql += ' ORDER BY c.created_at DESC';
+
+  const limit = Number(filters.limit);
+  const offset = Number(filters.offset);
+
+  if (Number.isInteger(limit) && limit > 0) {
+    sql += ' LIMIT ? OFFSET ?';
+    params.push(limit, Number.isInteger(offset) && offset >= 0 ? offset : 0);
+  }
+
+  return query(sql, params);
+}
+
 
   // Get course by ID
   static async findById(id) {

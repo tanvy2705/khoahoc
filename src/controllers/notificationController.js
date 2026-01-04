@@ -8,8 +8,24 @@ const Helpers = require('../utils/helpers');
 class NotificationController {
   // Get user notifications
   getNotifications = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 20, status, type } = req.query;
-    const pagination = Helpers.getPagination(page, limit);
+   // Get user notifications
+getNotifications = asyncHandler(async (req, res) => {
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 20;
+  const status = req.query.status;
+  const type = req.query.type;
+
+  const pagination = Helpers.getPagination(page, limit);
+
+  const notifications = await Notification.getUserNotifications(req.user.id, {
+    limit: pagination.limit,
+    offset: pagination.offset,
+    status,
+    type
+  });
+
+  return ResponseHandler.success(res, notifications);
+});
 
     const notifications = await Notification.getUserNotifications(req.user.id, {
       ...pagination,

@@ -7,27 +7,33 @@ const Helpers = require('../utils/helpers');
 
 class CourseController {
   // Get all courses
-  getAllCourses = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, status, category_id, search, featured } = req.query;
-    
-    const pagination = Helpers.getPagination(page, limit);
-    
-    const courses = await Course.getAll({
-      ...pagination,
-      status,
-      category_id,
-      search,
-      featured: featured === 'true'
-    });
+getAllCourses = asyncHandler(async (req, res) => {
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 10;
+  const status = req.query.status;
+  const category_id = req.query.category_id;
+  const search = req.query.search;
+  const featured = req.query.featured === 'true';
 
-    const total = await Course.count({ status, category_id, search });
+  const pagination = Helpers.getPagination(page, limit);
 
-    return ResponseHandler.paginated(res, courses, {
-      page: pagination.page,
-      limit: pagination.limit,
-      total
-    });
+  const courses = await Course.getAll({
+    limit: pagination.limit,
+    offset: pagination.offset,
+    status,
+    category_id,
+    search,
+    featured
   });
+
+  const total = await Course.count({ status, category_id });
+
+  return ResponseHandler.paginated(res, courses, {
+    page: pagination.page,
+    limit: pagination.limit,
+    total
+  });
+});
 
   // Get course by ID
   getCourseById = asyncHandler(async (req, res) => {

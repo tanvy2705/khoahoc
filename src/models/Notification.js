@@ -37,30 +37,34 @@ class Notification {
     );
   }
 
-  // Get user notifications
-  static async getUserNotifications(userId, filters = {}) {
-    let sql = 'SELECT * FROM notifications WHERE user_id = ?';
-    const params = [userId];
-    
-    if (filters.status) {
-      sql += ' AND status = ?';
-      params.push(filters.status);
-    }
-    
-    if (filters.type) {
-      sql += ' AND type = ?';
-      params.push(filters.type);
-    }
-    
-    sql += ' ORDER BY created_at DESC';
-    
-    if (filters.limit) {
-      sql += ' LIMIT ? OFFSET ?';
-      params.push(parseInt(filters.limit), parseInt(filters.offset || 0));
-    }
-    
-    return await query(sql, params);
+  // Get user notifications (FIXED)
+static async getUserNotifications(userId, filters = {}) {
+  let sql = 'SELECT * FROM notifications WHERE user_id = ?';
+  const params = [Number(userId)];
+
+  if (filters.status) {
+    sql += ' AND status = ?';
+    params.push(filters.status);
   }
+
+  if (filters.type) {
+    sql += ' AND type = ?';
+    params.push(filters.type);
+  }
+
+  sql += ' ORDER BY created_at DESC';
+
+  // ✅ FIX ĐÚNG
+  if (filters.limit !== undefined) {
+    const limit = Number(filters.limit) || 20;
+    const offset = Number(filters.offset) || 0;
+
+    sql += ` LIMIT ${limit} OFFSET ${offset}`;
+  }
+
+  return query(sql, params);
+}
+
 
   // Get unread count
   static async getUnreadCount(userId) {
